@@ -15,23 +15,20 @@ onmessage = (msg) => {
     var netParam = getNetParam();
     var listenfd = 3;
     fetch(getImagename(), { credentials: 'same-origin' }).then((resp) => {
-        const contentType = resp.headers.get('content-type');
+        
+        const contentLength = resp.headers.get("content-length");
+        
 
-        if(contentType == null) {
-            throw Error('Failed to detect image encoding');
-        }
-
-
+        //Count the bytes we are downloading so we can show progress
         //Stream the response through the GZip decoder if needed. Supports browsers since about 2023.
         return new Response(
             new ReadableStream({
 
                 start(respController) {
+                    var byteCount = 0;
                     var respBody = resp.body;
 
-                    if(contentType == "application/x-gzip") {
-                        respBody = respBody.pipeThrough( new DecompressionStream("gzip"));
-                     }
+                    
 
                      const respReader = respBody.getReader();
                      readResponse(self);
@@ -42,6 +39,9 @@ onmessage = (msg) => {
                                 respController.close()
                                 return;
                             }
+                            byteCount+= value.byteLength;
+                            
+                            self.postMessage('Loaded : '+Math.Round(byteCount/contentLength*100) + "%")
 
                             respController.enqueue(value);
                             readResponse(self);
@@ -52,8 +52,41 @@ onmessage = (msg) => {
                     }
 
                 }
-            })
+            }),{headers: resp.headers}
+
         );
+
+    }).then((resp) => {
+        if(resp.headers.get('content-type') == "application/x-gzip") {
+            return new Response(
+                new ReadableStream({
+    
+                    start(respController) {
+                        const respReader =resp.body.pipeThrough( new DecompressionStream("gzip")).getReader()
+
+            
+                     readResponse(self);
+
+                    function readResponse(self) {
+                        respReader.read(self).then(({done,value}) => {
+                            if(done) {
+                                respController.close()
+                                return;
+                            }
+                            respController.enqueue(value);
+                            readResponse(self);
+                        }).catch(error => {
+                            console.error(error);
+                            respController.error(error);
+                        })
+                    }
+                    }
+                }));
+
+        }else{
+            return resp;
+        }
+
 
     }).then((resp) => {
         resp['arrayBuffer']().then((wasm) => {
